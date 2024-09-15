@@ -1,7 +1,8 @@
+https://github.com/user-attachments/assets/ab8b31a4-25ad-453d-9cad-147bc444271c
+
+
 # Mnist Network Visualization
 A visualization of an MNIST neural network written from scratch in Odin and Raylib
-
-# Demo
 
 ## Usage
 - Clone the repo
