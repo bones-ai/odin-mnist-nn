@@ -17,6 +17,10 @@ cd odin-mnist-nn
 - The simulation currently uses a preloaded network, update the `main.odin` to train a new network.
 - `configs.odin` is the configuration file
 
+## Train a network yourself
+- You'll need the mnist data files from - [kaggle.com/datasets/oddrationale/mnist-in-csv/data](https://www.kaggle.com/datasets/oddrationale/mnist-in-csv/data)
+- Put the 2 files `mnist_test.csv` and `mnist_train.csv` in a new folder called `data` at the root of the project
+
 ## Extras
 - I post project updates on my [Twitter - @BonesaiDev](https://x.com/BonesaiDev)
 - Check out my other projects on github [https://github.com/bones-ai](https://github.com/bones-ai)
