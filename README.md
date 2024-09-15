@@ -12,7 +12,7 @@ cd odin-mnist-nn
 ```
 - Run the simulation
 ```bash
-./build.sh speed && ./odin-nn
+./build.sh speed && ./odin-mnist-nn
 ```
 - The simulation currently uses a preloaded network, update the `main.odin` to train a new network.
 - `configs.odin` is the configuration file
