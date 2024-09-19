@@ -16,7 +16,7 @@ load_mnist_data :: proc(path: string, size: int) -> (ret: [dynamic]MnistRecord, 
     if ferr != 0 do return
     defer os.close(f)
 
-    r: bufio.Reader 
+    r: bufio.Reader
     buffer: [1024]byte
     bufio.reader_init_with_buf(&r, os.stream_from_handle(f), buffer[:])
     defer bufio.reader_destroy(&r)
@@ -24,20 +24,18 @@ load_mnist_data :: proc(path: string, size: int) -> (ret: [dynamic]MnistRecord, 
     // Ignore csv file header
     line, err := bufio.reader_read_string(&r, '\n', context.temp_allocator)
 
-    i := 0
     ret = make([dynamic]MnistRecord, size)
-    for { 
-        defer i += 1 
+    for i := 0; ; i += 1 {
         line, err := bufio.reader_read_string(&r, '\n', context.temp_allocator)
-        if err != nil || i >= size - 1 { 
-            break 
-        } 
+        if err != nil || i >= size - 1 {
+            break
+        }
 
         // Process line
         values := split_u8_string(line)
         ret[i].label = values[0]
-        for j in 1..=MNIST_IMG_DATA_LEN {
-            ret[i].pixels[j-1] = f32 (values[j]) / 255.0
+        for j in 0..<MNIST_IMG_DATA_LEN {
+            ret[i].pixels[j + 1] = f32 (values[j + 1]) / 255.0
         }
     }
 
@@ -152,7 +150,7 @@ calc_net_accuracy :: proc(test_dataset: []MnistRecord, net: ^Net) -> f32 {
         }
     }
 
-    return f32 (count) / f32 (len(test_dataset))
+    return f32(count) / max(f32(len(test_dataset)), 1)
 }
 
 // MARK: Augmentation
@@ -275,10 +273,4 @@ split_u8_string :: proc(s: string) -> (result: [MNIST_IMG_DATA_LEN + 1]u8) {
     }
 
     return result;
-}
-
-clamp :: proc(value, min, max: f32) -> f32 {
-    if value < min do return min
-    if value > max do return max
-    return value
 }

@@ -4,7 +4,7 @@ package main
 import "core:c"
 import "core:fmt"
 import "core:math"
-import sort "core:sort"
+import "core:slice"
 import rand "core:math/rand"
 import rl "vendor:raylib"
 
@@ -21,17 +21,27 @@ g_camera3d: rl.Camera3D
 g_cam_angle: f32 = 0
 g_img_input: MnistRecord
 g_flags: Flags
+g_thresholds: Thresholds
 g_net: Net
 
 // MARK: Structs
 
+@private
 Flags :: struct {
     cam_rotate: bool,
     draw_connections: bool,
     draw_cubes: bool,
     draw_cube_lines: bool,
+    draw_node_activations: bool,
     draw_weight_cloud: bool,
     load_test_imgs: bool
+}
+
+@private
+Thresholds :: struct {
+    weight_cloud: f32,
+    activations: f32,
+    connections: f32
 }
 
 LayerViz :: struct {
@@ -54,15 +64,17 @@ Line :: struct {
     color: rl.Color,
 }
 
-OutputCuboid :: struct {
+Cuboid :: struct {
     pos: rl.Vector3,
+    size: rl.Vector3,
+    color: rl.Color,
     is_activated: bool
 }
 
 Shape :: union {
     Cube,
     Line,
-    OutputCuboid
+    Cuboid
 }
 
 SceneObject :: struct {
@@ -80,8 +92,7 @@ viz_init :: proc() -> (err: bool) {
     rl.SetTargetFPS(FPS)
 
     // Do not mem init the loaded net
-    net_err := net_load(&g_net)
-    if net_err do return true 
+    net_load(&g_net) or_return
 
     // Cam setup
     g_camera3d.position = rl.Vector3{0, 30, 0}
@@ -90,12 +101,17 @@ viz_init :: proc() -> (err: bool) {
     g_camera3d.fovy = 75
     g_camera3d.projection = rl.CameraProjection.PERSPECTIVE
 
-    // Settings default
+    // Flag defaults
     g_flags.cam_rotate = true
     g_flags.draw_connections = true
     g_flags.draw_cubes = true
     g_flags.draw_cube_lines = true
     g_flags.load_test_imgs = true
+
+    // Threshold defaults
+    g_thresholds.activations = 25
+    g_thresholds.connections = 25
+    g_thresholds.weight_cloud = 50
 
     return false
 }
@@ -150,32 +166,23 @@ viz_update :: proc(test_img: ^MnistRecord) {
 
     rl.ClearBackground(rl.GetColor(BG_COLOR_DARK_BLUE))
     draw_3d(&activations, &grad_net, &contrib_net, prediction_idx)
-    draw_2d(prediction_idx, preds[prediction_idx])
+    draw_2d(prediction_idx, preds)
 }
 
 // MARK: Draw Root
 
-draw_2d :: proc(pred_idx: int, pred_accuracy: f32) {
-    draw_settings()
-    draw_2d_image_input_grid(30, 250)
-    rl.DrawFPS(30, 550)
+draw_2d :: proc(pred_idx: int, preds: []f32) {
+    PADDING :: 30
+    GRAPH_HEIGHT :: 100
 
-    result := fmt.tprintf("RES: %d: %.2f%%", pred_idx, pred_accuracy * 100)
-    fps := fmt.tprintf("RES: %d: %.2f%%", pred_idx, pred_accuracy * 100)
-    rl.DrawText(cstring(raw_data(result)), 30, 500, 30, rl.WHITE)
+    pred_accuracy := preds[pred_idx]
+    input_grid_width := i32(MNIST_IMG_SIZE * 8)
+    input_grid_start_y := int(rl.GetRenderHeight() - input_grid_width - PADDING)
 
-    // // Draw inference results
-    // START_X :: 700
-    // result := fmt.tprintf("RES: %d: %.2f%%", prediction_idx, preds[prediction_idx] * 100)
-    // rl.DrawText(cstring(raw_data(result)), START_X, 30, 40, rl.WHITE)
-    // for i in 0..<MNIST_NUM_LABELS {
-    //     text := fmt.tprintf("%d: %.2f%%", i, preds[i] * 100)
-    //     rl.DrawText(
-    //         cstring(raw_data(text)),
-    //         START_X, i32(i * 50) + 100, 30,
-    //         rl.WHITE
-    //     )
-    // }
+    show_gui(&g_flags, &g_thresholds)
+    draw_bar_graph(preds, PADDING, i32(input_grid_start_y) - GRAPH_HEIGHT, input_grid_width + PADDING, GRAPH_HEIGHT)
+    draw_2d_image_input_grid(PADDING, input_grid_start_y)
+    rl.DrawFPS(rl.GetRenderWidth() - 100, PADDING)
 }
 
 draw_3d :: proc(activations: ^[][]f32, grads, contribs: ^Net, prediction_idx: int) {
@@ -187,7 +194,7 @@ draw_3d :: proc(activations: ^[][]f32, grads, contribs: ^Net, prediction_idx: in
     objs := make([dynamic]SceneObject, context.temp_allocator)
 
     // Init drawable objects
-    collect_3d_shapes(&shapes, grads, contribs, prediction_idx)
+    collect_3d_shapes(&shapes, grads, contribs, activations, prediction_idx)
 
     // Calc distance from cam to object
     for shape in shapes {
@@ -197,16 +204,13 @@ draw_3d :: proc(activations: ^[][]f32, grads, contribs: ^Net, prediction_idx: in
             case Cube:
                 shape_pos = s.pos
                 // This helps draw the cube over the line when rendering
-                scale_factor = 1.5
-            case OutputCuboid:
+                scale_factor = 2.5
+            case Cuboid:
                 shape_pos = s.pos
+                scale_factor = 1.5
             case Line:
                 // Mid-point of the line
-                shape_pos = {
-                    (s.start.x + s.end.x)/2, 
-                    (s.start.y + s.end.y)/2, 
-                    (s.start.z + s.end.z)/2 
-                }
+                shape_pos = (s.start + s.end)/2
         }
 
         // Create scene objects based on thier distance to the camera
@@ -215,13 +219,10 @@ draw_3d :: proc(activations: ^[][]f32, grads, contribs: ^Net, prediction_idx: in
             dist_to_cam = calc_vec3_dist_squared(shape_pos, g_camera3d.position) * scale_factor
         })
     }
+
     // Sort objects so that things farther from the camera are drawn first
     // This helps fix the alpha blending issues,
-    sort.quick_sort_proc(objs[:], proc(a, b: SceneObject) -> int {
-        if a.dist_to_cam > b.dist_to_cam do return -1
-        if a.dist_to_cam < b.dist_to_cam do return 1
-        return 0
-    })
+    slice.sort_by_cmp(objs[:], compare_scene_objects)
 
     // Render objects, depth sorted
     for obj in objs {
@@ -232,16 +233,11 @@ draw_3d :: proc(activations: ^[][]f32, grads, contribs: ^Net, prediction_idx: in
                 }
             case Line:
                 rl.DrawLine3D(shape.start, shape.end, shape.color)
-            case OutputCuboid:
-                grid_color := rl.BEIGE
-                block_color := rl.ColorAlpha(rl.WHITE, 0.5)
-                if g_flags.draw_cube_lines {
-                    rl.DrawCubeWires(shape.pos, 3, 5, 1, grid_color)
-                }
-                if g_flags.draw_cubes {
-                    if shape.is_activated {
-                        rl.DrawCube(shape.pos, 3, 5, 1, block_color)
-                    }
+            case Cuboid:
+                rl.DrawCubeWiresV(shape.pos, shape.size, shape.color)
+                if g_flags.draw_cubes && shape.is_activated {
+                    block_color := rl.ColorAlpha(rl.WHITE, 0.5)
+                    rl.DrawCubeV(shape.pos, shape.size, block_color)
                 }
         }
     }
@@ -249,7 +245,7 @@ draw_3d :: proc(activations: ^[][]f32, grads, contribs: ^Net, prediction_idx: in
 
 // MARK: !! 3D !!
 
-collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, prediction_idx: int) {
+collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, activations: ^[][]f32, prediction_idx: int) {
     z_offset: f32 = -40.0
 
     // Input layer
@@ -264,7 +260,7 @@ collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, predic
         columns = MNIST_IMG_SIZE,
         depth = 1,
         z_offset = z_offset
-    }, shapes)
+    }, shapes, {})
 
     num_inputs := MNIST_IMG_SIZE
     for i in 0..<len(g_net.layers) {
@@ -272,6 +268,7 @@ collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, predic
         weights := g_net.layers[i].w
         grads := grads.layers[i].w
         contrib := contribs.layers[i].w
+        activation := activations[i + 1]
         num_nodes := len(weights)
         grid_color := rl.WHITE
 
@@ -287,7 +284,7 @@ collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, predic
                 columns = MNIST_IMG_SIZE,
                 depth = num_nodes,
                 z_offset = z_offset
-            }, shapes)
+            }, shapes, activation)
             z_offset += f32(num_nodes)
             num_inputs = num_nodes
             continue
@@ -306,7 +303,7 @@ collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, predic
             columns = num_inputs,
             depth = 1,
             z_offset = z_offset,
-        }, shapes)
+        }, shapes, activation)
 
         // Number of inputs to the next layer equals 
         // Number of nodes in the current layer
@@ -319,15 +316,16 @@ collect_3d_shapes :: proc(shapes: ^[dynamic]Shape, grads, contribs: ^Net, predic
     collect_output_layer_shapes(shapes, prediction_idx)
 }
 
-collect_layer_shapes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
+collect_layer_shapes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape, activation: []f32) {
     z_offset := layer.z_offset
     half_col := f32(layer.columns) / 2.0
     half_row := f32(layer.rows) / 2.0
     viz_depth := f32(layer.depth + 1)
 
-    // A layer has weight cubes, weight cube lines and connection lines
+    // A layer has weight cubes, weight cube lines, activations lines and connection lines
     collect_layer_weight_cubes(layer, shapes)
     collect_layer_cube_lines(layer, shapes)
+    collect_node_activation_lines(layer, shapes, activation)
     // Connection lines can be initialized after all the cubes have been drawn
 }
 
@@ -373,6 +371,43 @@ collect_layer_cube_lines :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
     }
 }
 
+collect_node_activation_lines :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape, activation: []f32) {
+    z_offset := layer.z_offset
+    half_col := f32(layer.columns) / 2.0
+    half_row := f32(layer.rows) / 2.0
+
+    if !g_flags.draw_node_activations {
+        return
+    }
+
+    // Show activated node
+    grid_color := rl.ColorAlpha(rl.WHITE, 0.3)
+    if layer.index == 1 {
+        for value, i in activation {
+            if value > 0 {
+                z := (SPACING * f32(layer.depth)) + z_offset - SPACING/2 - f32(i)
+                append(shapes, Cuboid {
+                    pos = {0, 0, z},
+                    size = {half_row * 2, half_col * 2, 1},
+                    color = grid_color
+                })
+            }
+        }
+    } else {
+        z := z_offset + SPACING/2
+        for value, i in activation {
+            if value > 0 {
+                y := SPACING - 0.5 + f32(i) - half_row
+                append(shapes, Cuboid {
+                    pos = {0, y, z},
+                    size = {f32(layer.columns), 1, 1},
+                    color = grid_color
+                })
+            }
+        }
+    }
+}
+
 collect_layer_connection_lines :: proc(shapes: ^[dynamic]Shape, prediction_idx: int) {
     if !g_flags.draw_connections {
         return
@@ -394,6 +429,7 @@ collect_layer_connection_lines :: proc(shapes: ^[dynamic]Shape, prediction_idx: 
         }
     }
 
+    lines_threshold := 255 - map_threshold_value(g_thresholds.connections, 0, 255)
     // Connection lines for the hidden layers
     for layer_index, layer_cubes in cubes_map {
         if layer_index + 1 not_in cubes_map {
@@ -409,7 +445,7 @@ collect_layer_connection_lines :: proc(shapes: ^[dynamic]Shape, prediction_idx: 
                     color = rl.ColorAlpha(rl.GRAY, 0.1),
                 }
 
-                threshold := CONNECTION_LINES_THRESHOLD if layer_index != 1 else CONNECTION_LINES_THRESHOLD - 50
+                threshold := lines_threshold if layer_index != 1 else lines_threshold - 50
                 if cube.color.a > u8(threshold) {
                     append(shapes, line)
                 }
@@ -459,6 +495,10 @@ collect_layer_weight_cubes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
         }
     }
 
+    // thresholds
+    weight_cloud_threshold := 1.0 - map_threshold_value(g_thresholds.weight_cloud, 0.6, 0.9)
+    activation_threshold := 1.0 - map_threshold_value(g_thresholds.activations, 0.7, 1.0)
+
     for d := 0; d < layer.depth; d += 1 {
         for i := 0; i < layer.columns; i += 1 {
             for j := 0; j < layer.rows; j += 1 {
@@ -482,7 +522,7 @@ collect_layer_weight_cubes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
 
                 // 1st hidden layer
                 if layer.index == 1 {
-                    if grad > 0.0 && contrib > 0.1 {
+                    if grad > 0.0 && contrib > activation_threshold - 0.1 {
                         append(shapes, Cube { 
                             pos=cube_pos, color=rl.ColorAlpha(COLOR_ACTIVATION, contrib + 0.1), layer_index=1 
                         })
@@ -493,14 +533,14 @@ collect_layer_weight_cubes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
                         append(shapes, Cube { pos=cube_pos, color=color, layer_index=1 })
                         // continue
                     } 
-                    if weight > WEIGHT_CLOUD_THRESHOLD && g_flags.draw_weight_cloud {
+                    if weight > weight_cloud_threshold && g_flags.draw_weight_cloud {
                         color := rl.ColorAlpha(COLOR_WEIGHTS, weight)
                         append(shapes, Cube { pos=cube_pos, color=color, layer_index=1 })
                     }
                     continue
                 }
 
-                if contrib > 0.5 {
+                if contrib > activation_threshold {
                     color := rl.ColorAlpha(COLOR_ACTIVATION, contrib - 0.5)
                     append(shapes, Cube { pos=cube_pos, color=color, layer_index=layer.index })
                     continue
@@ -510,7 +550,7 @@ collect_layer_weight_cubes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
                     append(shapes, Cube { pos=cube_pos, color=color, layer_index=layer.index })
                     continue
                 }
-                if weight > 0.3 && g_flags.draw_weight_cloud {
+                if weight > weight_cloud_threshold && g_flags.draw_weight_cloud {
                     color := rl.ColorAlpha(COLOR_WEIGHTS, weight)
                     append(shapes, Cube { pos=cube_pos, color=color, layer_index=layer.index })
                 }
@@ -521,41 +561,25 @@ collect_layer_weight_cubes :: proc(layer: ^LayerViz, shapes: ^[dynamic]Shape) {
 
 collect_output_layer_shapes :: proc(shapes: ^[dynamic]Shape, prediction_idx: int) {
     horizontal_spacing: f32 = 6.0
+    start_x := -f32(MNIST_NUM_LABELS - 1) * horizontal_spacing / 2
 
-    // Calculate the starting position to center the cubes around 0
-    start_x := - (f32((MNIST_NUM_LABELS - 1)) * horizontal_spacing) / 2
-    i := 0
-    for x := start_x; i < MNIST_NUM_LABELS; x += horizontal_spacing {
-        append(shapes, OutputCuboid {
-            pos = { f32(x), 0, 40 },
-            is_activated = i == prediction_idx
-        })
-        i += 1
+    for i in 0..<MNIST_NUM_LABELS {
+        x := start_x + f32(i) * horizontal_spacing
+        is_activated := i == prediction_idx && g_flags.draw_cubes
+        should_draw := g_flags.draw_cube_lines || is_activated
+
+        if should_draw {
+            append(shapes, Cuboid {
+                pos = {x, 0, 40},
+                size = {3, 5, 1},
+                color = rl.BEIGE,
+                is_activated = is_activated,
+            })
+        }
     }
 }
 
 // MARK: !! 2D !!
-
-draw_settings :: proc() {
-    ui_checkbox("Rotate Cam", {30, 30}, g_flags.cam_rotate, proc() {
-        g_flags.cam_rotate = !g_flags.cam_rotate
-    })
-    ui_checkbox("Show Connections", {30, 60}, g_flags.draw_connections, proc() {
-        g_flags.draw_connections = !g_flags.draw_connections
-    })
-    ui_checkbox("Show Cube Lines", {30, 90}, g_flags.draw_cube_lines, proc() {
-        g_flags.draw_cube_lines = !g_flags.draw_cube_lines
-    })
-    ui_checkbox("Show Cubes", {30, 120}, g_flags.draw_cubes, proc() {
-        g_flags.draw_cubes = !g_flags.draw_cubes
-    })
-    ui_checkbox("Show Weight Cloud", {30, 150}, g_flags.draw_weight_cloud, proc() {
-        g_flags.draw_weight_cloud = !g_flags.draw_weight_cloud
-    })
-    ui_checkbox("Load Test Images", {30, 180}, g_flags.load_test_imgs, proc() {
-        g_flags.load_test_imgs = !g_flags.load_test_imgs
-    })
-}
 
 draw_2d_image_input_grid :: proc(x_offset: int, y_offset: int) {
     LINES_COLOR :: rl.GRAY
@@ -635,6 +659,33 @@ draw_2d_image_input_grid :: proc(x_offset: int, y_offset: int) {
     }
 }
 
+draw_bar_graph :: proc(values: []f32, x_offset, y_offset, graph_width, graph_height: i32) {
+    assert(len(values) == 10, "Expected 10 values in the array")
+
+    // Leave some space on the sides
+    bar_width: i32 = 20
+    spacing: i32 = 1
+    max_height := graph_height - 50 
+
+    for i := 0; i < len(values); i += 1 {
+        height := i32(values[i] * f32(max_height))
+        x := x_offset + i32(spacing + i32(i) * (bar_width + spacing))
+        y := y_offset + graph_height - height - 30
+
+        rl.DrawRectangle(x, y, bar_width, height, rl.WHITE)
+
+        // Draw the value on top of each bar
+        value_text := rl.TextFormat("%d", i32(values[i] * 100))
+        text_width := rl.MeasureText(value_text, 20)
+        rl.DrawText(value_text, x + bar_width/2 - text_width/2, y - 25, 20, rl.WHITE)
+
+        // Draw the index below the bar
+        index_text := rl.TextFormat("%d", i)
+        index_text_width := rl.MeasureText(index_text, 20)
+        rl.DrawText(index_text, x + bar_width/2 - index_text_width/2, y_offset + graph_height - 25, 20, rl.WHITE)
+    }
+}
+
 // MARK: Inputs
 
 handle_keyboard_input :: proc() {
@@ -646,51 +697,6 @@ handle_keyboard_input :: proc() {
     }
     if rl.IsKeyPressed(rl.KeyboardKey.R) {
         g_img_input = {}
-    }
-}
-
-// MARK: UI
-
-ui_checkbox :: proc(label: string, pos: rl.Vector2, is_enabled: bool, onClick: proc()) {
-    checkbox_size: i32 = 20
-    checkbox_enabled_size: i32 = 14
-    enabled_size_diff: i32 = (checkbox_size - checkbox_enabled_size) / 2
-    
-    // Calculate text dimensions
-    text_size: i32 = 20
-    text_width := rl.MeasureText(cstring(raw_data(label)), text_size)
-    
-    // Draw checkbox
-    rl.DrawRectangleLines(
-        i32(pos.x), i32(pos.y), 
-        checkbox_size, checkbox_size, 
-        rl.WHITE
-    )
-    if is_enabled {
-        rl.DrawRectangle(
-            i32(pos.x) + enabled_size_diff, i32(pos.y) + enabled_size_diff, 
-            checkbox_enabled_size, checkbox_enabled_size, 
-            rl.WHITE
-        )
-    }
-    
-    // Draw text
-    text_pos_x := i32(pos.x) + checkbox_size + 10
-    text_pos_y := i32(pos.y) + checkbox_size / 2 - 10
-    rl.DrawText(
-        cstring(raw_data(label)), 
-        text_pos_x, text_pos_y, text_size, 
-        rl.WHITE
-    )
-    
-    total_width := f32(checkbox_size + 10 + text_width)
-    total_height := f32(max(checkbox_size, text_size))
-    is_mouse_on_area := rl.CheckCollisionPointRec(
-        rl.GetMousePosition(), 
-        {pos.x, pos.y, total_width, total_height}
-    )
-    if is_mouse_on_area && rl.IsMouseButtonPressed(.LEFT) {
-        onClick()
     }
 }
 
@@ -713,4 +719,15 @@ calc_vec3_dist_squared :: proc(a, b: rl.Vector3) -> f32 {
     dz := a.z - b.z
 
     return dx*dx + dy*dy + dz*dz
+}
+
+// Maps a value from the range [0.0, 100.0] to the new range [x, y]
+map_threshold_value :: proc(value, x, y: f32) -> f32 {
+    return x + ((value / 100.0) * (y - x))
+}
+
+compare_scene_objects :: proc(a, b: SceneObject) -> slice.Ordering {
+    if a.dist_to_cam > b.dist_to_cam do return .Less
+    if a.dist_to_cam < b.dist_to_cam do return .Greater
+    return .Equal
 }

@@ -277,10 +277,10 @@ net_save :: proc(net: ^Net) -> bool {
 
 // Do not init mem when loading a network
 // It leads to memory leaks
-net_load :: proc(net: ^Net) -> (err: bool) {
+net_load :: proc(net: ^Net) -> (ok: bool) {
     if json_data, ok := os.read_entire_file(NETWORK_LOAD_FILE_PATH, context.temp_allocator); ok {
         if json.unmarshal(json_data, net) == nil {
-            return false
+            return true
         } else {
             fmt.println("Failed to unmarshal JSON")
         }
@@ -288,5 +288,5 @@ net_load :: proc(net: ^Net) -> (err: bool) {
         fmt.println("Failed to load saved net")
     }
 
-    return true
+    return false
 }
