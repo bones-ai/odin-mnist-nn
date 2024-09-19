@@ -20,6 +20,7 @@ COLOR_GRAD :: rl.GREEN
 g_font_20: rl.Font
 g_font_30: rl.Font
 g_camera3d: rl.Camera3D
+g_saved_mouse_position: rl.Vector2
 g_cam_angle: f32 = 0
 g_img_input: MnistRecord
 g_flags: Flags
@@ -93,6 +94,14 @@ viz_init :: proc() -> (err: bool) {
     net_err := net_load(&g_net)
     if net_err do return true
 
+    // Init cam and settings
+    viz_init_transient()
+
+    return false
+}
+
+@private
+viz_init_transient :: proc() {
     // Cam setup
     g_camera3d.position = rl.Vector3{0, 30, 0}
     g_camera3d.target = rl.Vector3{0, 0, 0}
@@ -106,8 +115,6 @@ viz_init :: proc() -> (err: bool) {
     g_flags.draw_cubes = true
     g_flags.draw_cube_lines = true
     g_flags.load_test_imgs = true
-
-    return false
 }
 
 @private
@@ -131,26 +138,118 @@ viz_update :: proc(test_img: ^MnistRecord) {
         g_camera3d.position.x = math.cos(g_cam_angle) * CAM_REVOLUTION_RADIUS
         g_camera3d.position.z = math.sin(g_cam_angle) * CAM_REVOLUTION_RADIUS
     } else {
-        if rl.IsKeyDown(.LEFT) {
-            g_cam_angle += CAM_REVOLUTION_SPEED * 0.03
+        // Camera Variables
+
+        dist := linalg.length(g_camera3d.position - g_camera3d.target)
+        norm := linalg.normalize(g_camera3d.position - g_camera3d.target)
+        cross := linalg.cross(norm, rl.Vector3{0, 1, 0})
+        
+        // Orbital Camera Movement - Mouse
+
+        if rl.IsMouseButtonPressed(.MIDDLE) {
+            rl.HideCursor()
+            g_saved_mouse_position = rl.GetMousePosition()
+        }
+        if rl.IsMouseButtonDown(.MIDDLE) {
+            mouse_delta := rl.GetMouseDelta()
+            delta_x := mouse_delta.x * (1.0/f32(rl.GetScreenHeight()))
+            delta_y := mouse_delta.y * (1.0/f32(rl.GetScreenHeight()))
+
+            g_camera3d.position += delta_x * cross * 60
+            g_camera3d.position.y += delta_y * 60
+            new_norm := linalg.normalize(g_camera3d.position - g_camera3d.target)
+            g_camera3d.position = g_camera3d.target + dist * new_norm
+
+            rl.SetMousePosition(i32(g_saved_mouse_position.x), i32(g_saved_mouse_position.y))
+        }
+        if rl.IsMouseButtonReleased(.MIDDLE) {
+            rl.ShowCursor()
         }
 
-        if rl.IsKeyDown(.RIGHT) {
-            g_cam_angle -= CAM_REVOLUTION_SPEED * 0.03
+        // Rotational Camera Movement - Mouse
+
+        if rl.IsMouseButtonPressed(.RIGHT) {
+            rl.HideCursor()
+            g_saved_mouse_position = rl.GetMousePosition()
+        }
+        if rl.IsMouseButtonDown(.RIGHT) {
+            mouse_delta := rl.GetMouseDelta()
+            delta_x := mouse_delta.x * (1.0/f32(rl.GetScreenHeight()))
+            delta_y := mouse_delta.y * (1.0/f32(rl.GetScreenHeight()))
+
+            rl.UpdateCameraPro(&g_camera3d, {}, {delta_x * 30, delta_y * 30, 0}, 0)
+
+            rl.SetMousePosition(i32(g_saved_mouse_position.x), i32(g_saved_mouse_position.y))
+        }
+        if rl.IsMouseButtonReleased(.RIGHT) {
+            rl.ShowCursor()
         }
 
-        if rl.IsKeyDown(.UP) {
-            norm := linalg.normalize(g_camera3d.position - g_camera3d.target)
-            g_camera3d.position -= norm * 10.0
+        // Camera Zoom - Mouse
+
+        mouse_wheel := rl.GetMouseWheelMoveV()
+        rl.UpdateCameraPro(&g_camera3d, 0, 0, -mouse_wheel.y * 5)
+
+        // Camera Zoom - Keyboard
+        if rl.IsKeyDown(.PAGE_UP) {
+            rl.UpdateCameraPro(&g_camera3d, 0, 0, -1)
         }
 
-        if rl.IsKeyDown(.DOWN) {
-            norm := linalg.normalize(g_camera3d.position - g_camera3d.target)
-            g_camera3d.position += norm * 10.0
+        if rl.IsKeyDown(.PAGE_DOWN) {
+            rl.UpdateCameraPro(&g_camera3d, 0, 0, 1)
         }
 
-        g_camera3d.position.x = math.cos(g_cam_angle) * CAM_REVOLUTION_RADIUS
-        g_camera3d.position.z = math.sin(g_cam_angle) * CAM_REVOLUTION_RADIUS
+        // Free Camera Movement - Keyboard
+
+        if rl.IsKeyDown(.W) {
+            rl.UpdateCameraPro(&g_camera3d, {1, 0, 0}, 0, 0)
+        }
+
+        if rl.IsKeyDown(.A) {
+            rl.UpdateCameraPro(&g_camera3d, {0, -1, 0}, 0, 0)
+        }
+
+        if rl.IsKeyDown(.S) {
+            rl.UpdateCameraPro(&g_camera3d, {-1, 0, 0}, 0, 0)
+        }
+
+        if rl.IsKeyDown(.D) {
+            rl.UpdateCameraPro(&g_camera3d, {0, 1, 0}, 0, 0)
+        }
+
+        if rl.IsKeyDown(.LEFT_SHIFT) {
+            rl.UpdateCameraPro(&g_camera3d, {0, 0, 1}, 0, 0)
+        }
+
+        if rl.IsKeyDown(.LEFT_CONTROL) {
+            rl.UpdateCameraPro(&g_camera3d, {0, 0, -1}, 0, 0)
+        }
+
+        if rl.IsKeyDown(.Z) {
+            g_camera3d.position.y -= 1
+            new_norm := linalg.normalize(g_camera3d.position - g_camera3d.target)
+            g_camera3d.position = g_camera3d.target + dist * new_norm
+        }
+
+        if rl.IsKeyDown(.X) {
+            g_camera3d.position.y += 1
+            new_norm := linalg.normalize(g_camera3d.position - g_camera3d.target)
+            g_camera3d.position = g_camera3d.target + dist * new_norm
+        }
+
+        if rl.IsKeyDown(.Q) {
+            g_camera3d.position += cross
+        }
+
+        if rl.IsKeyDown(.E) {
+            g_camera3d.position -= cross
+        }
+
+        // Reset
+
+        if rl.IsKeyPressed(.K) {
+            viz_init_transient()
+        }
     }
     if g_flags.load_test_imgs {
         g_img_input.pixels = test_img.pixels
@@ -194,6 +293,9 @@ draw_2d :: proc(pred_idx: int, pred_accuracy: f32) {
         g_img_input.pixels = {}
     }
     rl.DrawFPS(30, 590)
+    if ui_button("Reset", {30, 650}) {
+        viz_init_transient()
+    }
 
     result := fmt.tprintf("RES: %d: %.2f%%", pred_idx, pred_accuracy * 100)
     fps := fmt.tprintf("RES: %d: %.2f%%", pred_idx, pred_accuracy * 100)
@@ -572,7 +674,11 @@ collect_output_layer_shapes :: proc(shapes: ^[dynamic]Shape, prediction_idx: int
 // MARK: !! 2D !!
 
 draw_settings :: proc() {
-    ui_checkbox("Rotate Cam", {30, 30}, &g_flags.cam_rotate)
+    temp := g_flags.cam_rotate 
+    if ui_checkbox("Rotate Cam", {30, 30}, &g_flags.cam_rotate) && !temp {
+        g_cam_angle = 0
+        g_camera3d.target = {}
+    }
     ui_checkbox("Show Connections", {30, 60}, &g_flags.draw_connections)
     ui_checkbox("Show Cube Lines", {30, 90}, &g_flags.draw_cube_lines)
     ui_checkbox("Show Cubes", {30, 120}, &g_flags.draw_cubes)
@@ -716,10 +822,11 @@ ui_checkbox :: proc(label: string, pos: rl.Vector2, is_enabled: ^bool) -> bool {
         {pos.x, pos.y, total_width, total_height}
     )
 
-    if is_mouse_on_area && rl.IsMouseButtonPressed(.LEFT) {
+    is_clicked := is_mouse_on_area && rl.IsMouseButtonPressed(.LEFT)
+    if is_clicked {
         is_enabled^ = !(is_enabled^)
     }
-    return is_enabled^
+    return is_clicked
 }
 
 ui_button :: proc(label: string, pos: rl.Vector2) -> bool {
