@@ -78,6 +78,7 @@ SceneObject :: struct {
 @private
 viz_init :: proc() -> (err: bool) {
     // Raylib init
+    rl.SetWindowState({.MSAA_4X_HINT})
     rl.InitWindow(WINDOW_W, WINDOW_H, "NN")
     rl.SetWindowState(rl.ConfigFlags{.WINDOW_RESIZABLE})
     rl.SetTargetFPS(FPS)
