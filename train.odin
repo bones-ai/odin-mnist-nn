@@ -35,7 +35,7 @@ load_mnist_data :: proc(path: string, size: int) -> (ret: [dynamic]MnistRecord, 
         values := split_u8_string(line)
         ret[i].label = values[0]
         for j in 0..<MNIST_IMG_DATA_LEN {
-            ret[i].pixels[j + 1] = f32 (values[j + 1]) / 255.0
+            ret[i].pixels[j] = f32 (values[j]) / 255.0
         }
     }
 
