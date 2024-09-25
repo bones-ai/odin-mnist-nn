@@ -95,11 +95,7 @@ viz_init :: proc() -> (err: bool) {
     net_load(&g_net) or_return
 
     // Cam setup
-    g_camera3d.position = rl.Vector3{0, 30, 0}
-    g_camera3d.target = rl.Vector3{0, 0, 0}
-    g_camera3d.up = rl.Vector3{0, 1, 0}
-    g_camera3d.fovy = 75
-    g_camera3d.projection = rl.CameraProjection.PERSPECTIVE
+    reset_cam()
 
     // Flag defaults
     g_flags.cam_rotate = true
@@ -136,6 +132,8 @@ viz_update :: proc(test_img: ^MnistRecord) {
         g_cam_angle += CAM_REVOLUTION_SPEED * rl.GetFrameTime()
         g_camera3d.position.x = math.cos(g_cam_angle) * CAM_REVOLUTION_RADIUS
         g_camera3d.position.z = math.sin(g_cam_angle) * CAM_REVOLUTION_RADIUS
+    } else {
+        rl.UpdateCamera(&g_camera3d, .FREE)
     }
     if g_flags.load_test_imgs {
         g_img_input.pixels = test_img.pixels
@@ -169,6 +167,15 @@ viz_update :: proc(test_img: ^MnistRecord) {
     draw_2d(prediction_idx, preds)
 }
 
+reset_cam :: proc() {
+    g_camera3d.position = {0, 30, 0}
+    g_camera3d.target = {}
+    g_camera3d.up = {0, 1, 0}
+    g_camera3d.fovy = 75
+    g_camera3d.projection = rl.CameraProjection.PERSPECTIVE
+    g_cam_angle = 0
+}
+
 // MARK: Draw Root
 
 draw_2d :: proc(pred_idx: int, preds: []f32) {
@@ -179,7 +186,7 @@ draw_2d :: proc(pred_idx: int, preds: []f32) {
     input_grid_width := i32(MNIST_IMG_SIZE * 8)
     input_grid_start_y := int(rl.GetRenderHeight() - input_grid_width - PADDING)
 
-    show_gui(&g_flags, &g_thresholds)
+    show_gui(&g_flags, &g_thresholds, reset_cam)
     draw_bar_graph(preds, PADDING, i32(input_grid_start_y) - GRAPH_HEIGHT, input_grid_width + PADDING, GRAPH_HEIGHT)
     draw_2d_image_input_grid(PADDING, input_grid_start_y)
     rl.DrawFPS(rl.GetRenderWidth() - 100, PADDING)

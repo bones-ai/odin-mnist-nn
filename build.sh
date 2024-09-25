@@ -14,6 +14,6 @@ case "$1" in
     
   *)
     echo "Default build"
-    odin build .
+    odin run .
     ;;
 esac

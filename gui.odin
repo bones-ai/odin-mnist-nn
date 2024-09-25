@@ -55,7 +55,7 @@ DropdownList :: struct {
 // MARK: Gui
 
 @private
-show_gui :: proc(flags: ^Flags, thresholds: ^Thresholds) {
+show_gui :: proc(flags: ^Flags, thresholds: ^Thresholds, reset_cam: proc()) {
     // TODO this is a bad way of doing this, and i can't think of anything better
     // The sliders need a boolean variable to track when its being updated
     // Else the slider updates are janky
@@ -77,6 +77,7 @@ show_gui :: proc(flags: ^Flags, thresholds: ^Thresholds) {
             CheckBox { "Show Node Activations", &flags.draw_node_activations },
             CheckBox { "Show Connections", &flags.draw_connections },
             CheckBox { "Load Test Images", &flags.load_test_imgs },
+            Button { "Reset Camera", reset_cam }
         },
     }
     thresholds := Container {
@@ -140,11 +141,12 @@ ui_container :: proc(container: ^Container) {
     for &w in container.widgets {
         switch &widget in w {
             case Button:
+                posy += 5
                 ui_button(&widget, posx, posy)
                 posy += WIDGET_HEIGHT
             case CheckBox:
                 ui_checkbox(&widget, posx, posy)
-                posy += WIDGET_HEIGHT / 2 
+                posy += WIDGET_HEIGHT / 2
             case Slider:
                 ui_slider(&widget, posx, posy)
                 posy += WIDGET_HEIGHT * 2
