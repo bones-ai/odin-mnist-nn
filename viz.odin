@@ -1,4 +1,4 @@
-//+private file
+#+private file
 package main
 
 import "core:c"
